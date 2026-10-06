@@ -53,6 +53,8 @@ CG_GUI/dist/
 *.xlsx
 *.md
 !README.md
+!README.en.md
+!CG_Bench/模型性能对比分析报告.md
 
 # ---- Hello / 临时脚本 ----
 _scan_secrets.py
