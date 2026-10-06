@@ -1,0 +1,141 @@
+# CalibGuard Bench 实验矩阵（唯一配置源，TH-1）
+# ================================================================ 2026-10-02 矩阵修订（用户决策）
+#   1) 训练全部改云端（本机仅做数据准备/评测/测速，不再训练）
+#   2) batch 策略：codebert 系 16（与 v0.2.2 机房一致）；多基座 LLM（Qwen 等）保持 8
+#      —— 每实验用 batch: 字段显式声明，harness 兜底 DEFAULT_BATCH=8
+#   3) codebert 的 shared/per 合并为一个 codebert_ft（同基座同网格同 seed，超参必然一致）
+#   4) 多基座 LLM 两段式：先跑 codebert 最优超参（*_shared），再各自跑 HPO（*_ft）；
+#      若 HPO best 与 shared 超参（lr/epochs/batch）完全一致 → 不二次训练，
+#      复用 *_shared 的模型与评测产物，并在 hpo.json / train.log / 报告中注明
+#   5) **训练顺序（2026-10-02 用户决策）**：先依次跑完全部 *_shared，再依次跑全部 *_ft
+#      —— 不按模型交替；codebert_ft 最先（产 shared_hpo），其后 *_shared 依次复用
+#   6) **hybrid_gate_llm 路由复用（2026-10-02 用户决策）**：其 codebert 模型即
+#      codebert_ft 的微调产物（同基座/同数据/同 seed=42），不二次训练——直接路由复用
+#      codebert_ft 的模型与 Platt 校准参数（reuse_model_from），只补一轮 test 评测留档
+#   7) v0.2.2_baseline 补跑改为在「当前统一划分源」的 test 段上评（跨版本对照口径）
+#   8) llm_zero / llm_fewshot 在 v2.5 不再跑（2026-10-02 用户决策：test 段 25,049 条 →
+#      单实验约 2.5 万次 API 调用，成本与耗时不可接受）→ status: excluded（不入队）
+# 训练顺序 = 本文件实验顺序（harness train --all 严格按序串行执行）
+# ================================================================ V2.5 数据切换 SOP（新数据就绪后逐条执行）
+#   a. 20+GB 扩容数据下载（现有源 + HuggingFace 数据集增量）→ data/raw/
+#   b. 清洗去重，只保留文本级恶意样本（剔除二进制/特征向量类内容）
+#   c. 重建四段划分（seed 42，group-aware）+ data/raw/_prep/v2_split_verify.py 同款强校验
+#   d. data_version: v2 → v2.5；除 llm_zero / llm_fewshot（延后）外全部重置 pending
+#   e. results/ 现产物归档到 results_archive/v2/；HPO 不复用旧版本档案（补丁 13）
+#   f. v0.2.2_baseline 补跑（4-6）在新 test 段上执行 —— 跨数据版本对照，报告须注明
+# 执行记录（2026-10-02）：a-e 已完成（DataDog 28,611 zip 全量 + HF 扩容 → 25.5 万样本；
+#   抽检 48 + 深挖 + 家族全查，剔除非文本层 374；四段重建第 2 轮八重校验泄漏全零，
+#   归一化层剔除 4,275 格式变体/标签矛盾；类别失衡 0.5% 经用户确认接受不采样；
+#   v2 产物归档 results_archive/v2/）。f 待云端执行。
+# ================================================================
+data_version: v2.5          # §3.0 数据版本机制（2026-10-02 切换；HPO 不复用 v2 档案）
+shared_hpo:                 # 本轮首跑 codebert HPO 产生并回写（v2.5 无同版本档案可复用）
+experiments:
+  - name: codebert_ft       # codebert 常规一套（原 codebert_ft_shared；shared/per 合并，2026-10-02）
+    type: ft                # 最先跑：产出 shared_hpo，后续 *_shared 依次复用
+    base_model: microsoft/codebert-base
+    hpo: shared             # 首跑产 shared_hpo（补丁 14：本轮首跑 codebert 逻辑）
+    batch: 16               # 云端标准，与 v0.2.2 机房一致（2026-10-02）
+    status: trained
+  - name: hybrid_gate_llm   # codebert 三桶门控 + LLM 复核
+    type: hybrid            # 路由复用 codebert_ft：不训练，只补一轮 test 评测（2026-10-02 用户决策）
+    base_model: microsoft/codebert-base
+    reuse_model_from: codebert_ft   # 模型即 codebert_ft 微调产物（同基座/同数据/同 seed=42）
+    batch: 16
+    status: trained
+  - name: qwen3_06b_shared  # 多基座两段式·第一段（先跑 codebert 最优超参）
+    type: reeval            # 训练已完成；评测链未跑完（calibrate 崩于 [CLS]/[SEP] bug，
+                            # 2026-10-05 已修）→ 只补 STEP 4-6，**不重训**（2026-10-05 用户决策）
+    base_model: base_models/Qwen3-0.6B
+    # model_dir: results/qwen3_06b_shared/codebert_finetuned   # 2026-10-05 补评已完成 -> 注释掉，
+    #   避免下次守卫重启被 backfill 重跑（约 4h）。reeval 分支有同路径兜底；如需重跑把本行加回。
+    hpo: shared
+    batch: 8                # 多基座 LLM batch 保持不变（2026-10-02 确认）
+    status: trained
+  - name: qwen25_coder_05b_shared
+    type: ft
+    base_model: base_models/Qwen2.5-Coder-0.5B-Instruct
+    hpo: shared
+    batch: 8
+    status: trained
+  - name: qwen3_coder_small_shared
+    type: ft
+    base_model: base_models/Qwen3-CoderSmall   # 与 qwen3_06b 同构同形：代码预特化 vs 基座初始化对照
+    hpo: shared
+    batch: 8
+    status: trained
+  - name: qwen3_06b_ft      # 多基座两段式·第二段（各自 HPO）
+    type: ft                # HPO best 与 shared 一致 → 不二次训练（复用 qwen3_06b_shared）
+    base_model: base_models/Qwen3-0.6B
+    hpo: per_model
+    batch: 8
+    status: excluded        # 2026-10-02 用户决策：per_model 网格 ~199h 不跑，保留 fp32 口径；与 *_shared 同超参故无信息增量
+  - name: qwen25_coder_05b_ft
+    type: ft
+    base_model: base_models/Qwen2.5-Coder-0.5B-Instruct
+    hpo: per_model
+    batch: 8
+    status: excluded        # 2026-10-02 用户决策：per_model 网格 ~199h 不跑，保留 fp32 口径；与 *_shared 同超参故无信息增量
+  - name: qwen3_coder_small_ft
+    type: ft
+    base_model: base_models/Qwen3-CoderSmall
+    hpo: per_model
+    batch: 8
+    status: excluded        # 2026-10-02 用户决策：per_model 网格 ~199h 不跑，保留 fp32 口径；与 *_shared 同超参故无信息增量
+  - name: v0.2.2_baseline   # 历史版本对照：不训练；已在当前统一划分源的 test 段上评（跨版本口径）
+    type: ft                # 2026-10-05 用户决策：**移除 model_dir**（原为 status=trained + model_dir
+                            # → 每次守卫重启都触发 backfill 重跑 4-6，已幂等跑过两次且结果一致，
+                            # 白耗 ~40min/次）。如需再次补跑，把下面一行 model_dir 加回即可。
+    # model_dir: models_baseline/v0.2.2/codebert_finetuned
+    params: models_baseline/v0.2.2/calibration_params.json
+    hpo: none
+    status: trained
+  - name: llm_zero          # API LLM 零样本（DeepSeek）
+    type: llm
+    variant: zero
+    status: excluded        # v2.5 不跑（2026-10-02 用户决策）：test 段 25,049 条 → 单实验约
+                            # 2.5 万次 API 调用（7-14 小时），成本与耗时不可接受；v2 结果已归档
+                            # results_archive/v2/llm_zero；如需重跑把 status 改回 pending
+  - name: llm_fewshot       # API LLM few-shot
+    type: llm
+    variant: fewshot
+    status: excluded        # 同上，v2.5 不跑
+  - name: rules_baseline    # 规则基线（下界参照）
+    type: rules
+    status: trained
+  # ------------------------------------------------------------------ batch 对齐复跑（2026-10-05 用户需求）
+  # 目的：原 codebert_ft 为 batch 16（云端显存策略），3 个 Qwen 为 batch 8 —— 有效 batch /
+  # 总步数 / warmup / LR 衰减曲线都不同，使「底座」不是唯一受控变量。此项让 codebert 也用
+  # batch 8，与 Qwen 对齐做受控对比。不跑 HPO 网格（直接复用 shared_hpo）。
+  # **不替换** batch16 的 codebert_ft：两份并列存档；仅当 batch8 版各项指标完全更优时，
+  # 才考虑替换（由用户决定）。
+  - name: codebert_ft_bs8
+    type: ft
+    base_model: microsoft/codebert-base
+    hpo: shared
+    batch: 8
+    status: trained
+  # ------------------------------------------------------------------ 本地基座零样本下界（2026-10-04 用户需求）
+  # 不训练、直接提示词判定（与 llm_zero 同模板/同截断/同 JSON 解析口径，仅后端从
+  # DeepSeek API 换成本地 Qwen 基座）。codebert 为编码器（无生成能力）故不在此列。
+  # 放在队列末尾：严格串行、且须在对应基座微调之后（避免抢占同一张卡）。
+  # 2026-10-05 实测结论（用户决策：放弃该线，3 项一并 excluded）：Qwen3-0.6B 在生成式
+  #   JSON 口径下系统性「复读 schema」——10 条全良性样本 × 3 模板，输出
+  #   {"malicious": true, "confidence": 0.0} 占 70–90%，概率恒 0、判别力为零；
+  #   贪心解码重试一字不差。该口径对本档小模型不成立，须改判别式口径
+  #   （label-logit / verbalizer）后方可重启此线。
+  - name: qwen3_06b_zero         # 未微调 Qwen3-0.6B 零样本
+    type: local_zeroshot
+    base_model: base_models/Qwen3-0.6B
+    template: v_feature
+    status: excluded            # 2026-10-05 用户决策：不跑（详见上方段注）
+  - name: qwen25_coder_05b_zero  # 未微调 Qwen2.5-Coder-0.5B-Instruct 零样本
+    type: local_zeroshot
+    base_model: base_models/Qwen2.5-Coder-0.5B-Instruct
+    template: v_feature
+    status: excluded            # 2026-10-05 用户决策：不跑（详见上方段注）
+  - name: qwen3_coder_small_zero  # 未微调 Qwen3-CoderSmall 零样本
+    type: local_zeroshot
+    base_model: base_models/Qwen3-CoderSmall
+    template: v_feature
+    status: excluded            # 2026-10-05 用户决策：不跑（详见上方段注）

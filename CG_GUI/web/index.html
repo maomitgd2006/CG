@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CalibGuard 文件审计</title>
+<style>
+  /* 单文件自包含：全部 CSS/JS 内联，禁止任何外部 CDN/字体/图标（离线可用） */
+  :root {
+    --red: #d32f2f; --yellow: #f9a825; --gray: #757575; --green: #2e7d32;
+    --line: #e0e0e0; --bg: #f5f6f8; --ink: #222; --muted: #666;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+    font-size: 14px; line-height: 1.6;
+  }
+  .hidden { display: none !important; }
+  /* ===== 顶部红色横幅：校准参数与模型不配套 ===== */
+  #banner { background: var(--red); color: #fff; padding: 10px 16px; font-weight: 600; }
+  /* ===== 顶栏 ===== */
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 14px 20px; background: #fff; border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 18px; margin: 0; }
+  #model-info { color: var(--muted); font-size: 13px; }
+  header .spacer { flex: 1; }
+  button {
+    font-family: inherit; font-size: 14px; padding: 7px 14px; border-radius: 6px;
+    border: 1px solid var(--line); background: #fff; color: var(--ink); cursor: pointer;
+  }
+  button.primary { background: #1976d2; border-color: #1976d2; color: #fff; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  main { max-width: 980px; margin: 0 auto; padding: 20px; }
+  /* ===== 拖拽区 ===== */
+  #drop-zone {
+    border: 2px dashed #b0bec5; border-radius: 10px; background: #fff;
+    padding: 26px 20px; text-align: center; transition: .15s;
+  }
+  #drop-zone.over { border-color: #1976d2; background: #e3f2fd; }
+  #drop-zone .hint { color: var(--muted); margin: 0 0 12px; }
+  #file-list { margin: 16px 0 0; text-align: left; }
+  .file-row {
+    display: flex; justify-content: space-between; gap: 12px;
+    padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
+    background: #fafafa; margin-bottom: 6px; font-size: 13px;
+  }
+  .file-row .size { color: var(--muted); white-space: nowrap; }
+  #drop-actions { margin-top: 14px; display: flex; gap: 10px; justify-content: center; }
+  /* ===== 高级：粘贴路径 ===== */
+  details.advanced { margin-top: 14px; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; }
+  details.advanced summary { cursor: pointer; color: var(--muted); }
+  #paste-paths { width: 100%; height: 84px; margin-top: 10px; padding: 8px; font-family: Consolas, monospace; font-size: 13px; border: 1px solid var(--line); border-radius: 6px; }
+  /* ===== 进度 ===== */
+  #progress { margin-top: 16px; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; }
+  #progress .stage { font-weight: 600; }
+  /* ===== 结果卡片 ===== */
+  #results { margin-top: 18px; }
+  .job-head { color: var(--muted); font-size: 12px; margin: 18px 0 8px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+  .card h3 { margin: 0 0 10px; font-size: 15px; word-break: break-all; }
+  .decision {
+    display: inline-block; color: #fff; font-weight: 700; font-size: 15px;
+    padding: 4px 14px; border-radius: 6px; letter-spacing: 1px;
+  }
+  .d-block { background: var(--red); }
+  .d-suspicious { background: var(--yellow); color: #3e2723; }
+  .d-manual { background: var(--gray); }
+  .d-allow { background: var(--green); }
+  .gate { color: var(--muted); font-size: 12px; margin-left: 10px; }
+  .prob-wrap { margin: 12px 0 10px; }
+  .prob-bar { height: 10px; background: #eceff1; border-radius: 5px; overflow: hidden; }
+  .prob-bar > span { display: block; height: 100%; }
+  .prob-text { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .meta-line { font-size: 13px; color: var(--muted); margin: 4px 0; }
+  .warn { background: #fff8e1; border: 1px solid #ffe082; color: #8d6e00; padding: 8px 12px; border-radius: 6px; margin: 10px 0; font-size: 13px; }
+  .err { background: #ffebee; border: 1px solid #ef9a9a; color: #b71c1c; padding: 8px 12px; border-radius: 6px; margin: 10px 0; font-size: 13px; white-space: pre-wrap; word-break: break-all; }
+  .evidence { margin-top: 10px; }
+  .ev-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .chip {
+    background: #eceff1; border-radius: 999px; padding: 2px 10px; font-size: 12px;
+    font-family: Consolas, monospace; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .chip.hit { background: #ffe0b2; }
+  .ev-group { margin-bottom: 8px; }
+  .ev-group .ev-label { font-size: 12px; color: var(--muted); }
+  .llm-box { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 10px; font-size: 13px; }
+  .llm-box .risk { font-weight: 700; }
+  /* ===== 设置弹层 ===== */
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; }
+  .modal .panel { background: #fff; border-radius: 10px; padding: 20px; width: 520px; max-width: 92vw; max-height: 88vh; overflow-y: auto; }
+  .modal h2 { margin: 0 0 6px; font-size: 16px; }
+  .modal input, .modal select { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 6px; font-family: inherit; background: #fff; }
+  .modal label { display: block; font-size: 13px; color: #37474f; margin: 12px 0 4px; }
+  .modal label.check { display: flex; align-items: center; gap: 8px; margin: 4px 0 0; font-size: 14px; color: var(--ink); }
+  .modal label.check input { width: auto; flex: none; }
+  .modal .group { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 2px; }
+  .modal .group.off { opacity: .45; }
+  .modal .sub { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+  .modal .sub label { margin: 0; flex: 1; }
+  .modal .sub input { width: 130px; flex: none; }
+  .modal .range { display: flex; align-items: center; gap: 10px; }
+  .modal .range input { width: 110px; }
+  .modal .range span { color: var(--muted); }
+  .modal .note { color: var(--muted); font-size: 12px; margin: 8px 0 14px; }
+  .modal .row { display: flex; gap: 10px; justify-content: flex-end; }
+  #settings-msg { font-size: 13px; margin-right: auto; align-self: center; color: var(--green); }
+  #settings-msg.err { color: var(--red); }
+  /* ===== 帮助折叠块 ===== */
+  details.help { margin-top: 22px; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; }
+  details.help summary { cursor: pointer; font-weight: 600; }
+  details.help ol { margin: 10px 0 0 18px; padding: 0; }
+  details.help code { background: #f0f0f0; padding: 1px 5px; border-radius: 4px; font-family: Consolas, monospace; }
+</style>
+</head>
+<body>
+
+<div id="banner" class="hidden">校准参数与模型可能不配套（换模型请整个 models/ 目录一起换）</div>
+
+<header>
+  <h1>CalibGuard 文件审计</h1>
+  <div id="model-info">模型信息加载中…</div>
+  <div class="spacer"></div>
+  <button id="settings-btn" type="button">设置</button>
+</header>
+
+<main>
+  <!-- ============ 拖拽区 ============ -->
+  <section id="drop-zone">
+    <p class="hint">把待审计文件拖到这里（支持多文件），或点击下方按钮选择</p>
+    <button id="pick-btn" type="button">选择文件</button>
+    <input id="file-input" type="file" multiple class="hidden">
+    <div id="file-list"></div>
+    <div id="drop-actions">
+      <button id="start-btn" class="primary" type="button" disabled>开始审计</button>
+      <button id="clear-btn" type="button" disabled>清空</button>
+    </div>
+  </section>
+
+  <!-- ============ 高级：直接给路径（不产生副本） ============ -->
+  <details class="advanced">
+    <summary>高级：直接粘贴文件路径（每行一个，审计原位置文件，不上传副本）</summary>
+    <textarea id="paste-paths" placeholder="samples/demo.py&#10;samples/benign_tool.py"></textarea>
+    <div style="margin-top:10px">
+      <button id="paste-start-btn" class="primary" type="button">用这些路径开始审计</button>
+    </div>
+  </details>
+
+  <!-- ============ 进度 ============ -->
+  <section id="progress" class="hidden">
+    <div class="stage" id="progress-stage">排队中…</div>
+    <div class="meta-line" id="progress-count"></div>
+  </section>
+
+  <!-- ============ 结果区 ============ -->
+  <section id="results"></section>
+
+  <!-- ============ 帮助：模型热更换协议 ============ -->
+  <details class="help">
+    <summary>帮助：模型热更换协议（整个 models/ 目录一起换）</summary>
+    <p style="margin:10px 0 0">
+      从 Bench 交付新模型只需两个产物：<code>results/{实验名}/codebert_finetuned/</code> 目录 +
+      <code>results/{实验名}/calibration_params.json</code>（必须同一实验）。训练侧档案
+      （train.log / train_meta.json / hpo.json / eval_*.json / speed.json /
+      identity_params.json / split_*.jsonl / error.log）留在 Bench 作实验追溯，本工具不消费。
+    </p>
+    <ol>
+      <li>退出 CalibGuard（关掉启动器窗口）。</li>
+      <li>把新版本的<b>整个 <code>models/</code> 目录</b>覆盖到 exe 旁的 <code>models/</code>（<code>codebert_finetuned/</code> 与 <code>calibration_params.json</code> 必须来自同一次训练，禁止拼凑）。</li>
+      <li>若新版本引擎代码有变（schema/管线变更），同时整体覆盖 <code>calibguard/</code> 目录。</li>
+      <li>重启 CalibGuard；顶部红色横幅不出现即配套正常。</li>
+    </ol>
+  </details>
+</main>
+
+<!-- ============ 设置弹层 ============ -->
+<div id="settings-modal" class="modal hidden">
+  <div class="panel">
+    <h2>设置</h2>
+    <label class="check"><input id="llm-enabled" type="checkbox"> 使用云端 LLM 复核灰区文件</label>
+    <p class="note">关闭后不发起任何云端调用，灰区文件按本地模型在 0.5 处判定（&gt;0.5 拦截，否则放行）。</p>
+
+    <div id="llm-group" class="group">
+      <label for="api-key">API Key</label>
+      <input id="api-key" type="password" autocomplete="off" placeholder="sk-...">
+      <label for="base-url">Base URL</label>
+      <input id="base-url" type="text" autocomplete="off" placeholder="https://api.deepseek.com">
+      <label for="llm-model">模型名称</label>
+      <input id="llm-model" type="text" autocomplete="off" placeholder="deepseek-chat">
+
+      <label for="content-source">送审内容</label>
+      <select id="content-source">
+        <option value="evidence">精炼证据（危险API / 网络行为 / 凭据访问等摘要）</option>
+        <option value="raw">文件原文（预处理后的全文文本）</option>
+      </select>
+
+      <label for="delivery-mode">投递方式</label>
+      <select id="delivery-mode">
+        <option value="truncate">截断（只送前 N 个字符）</option>
+        <option value="window">滑窗（分片逐窗送审，结果取最严重）</option>
+        <option value="all">一次性全部上传</option>
+      </select>
+
+      <div id="row-truncate" class="sub">
+        <label for="truncate-chars">截断大小（字符）</label>
+        <input id="truncate-chars" type="number" min="1" step="100">
+      </div>
+      <div id="row-window" class="sub">
+        <label for="window-chars">滑窗大小（字符）</label>
+        <input id="window-chars" type="number" min="1" step="100">
+      </div>
+      <div id="row-window2" class="sub">
+        <label for="window-overlap">滑窗重叠（字符）</label>
+        <input id="window-overlap" type="number" min="0" step="50">
+      </div>
+    </div>
+
+    <div class="group">
+      <label>灰区范围（校准后恶意概率）</label>
+      <div class="range">
+        <input id="allow-threshold" type="number" min="0" max="1" step="0.01">
+        <span>~</span>
+        <input id="block-threshold" type="number" min="0" max="1" step="0.01">
+      </div>
+      <p class="note">低于下限直接放行、高于上限直接拦截；默认 0.15 ~ 0.85，中间地带才提交云端复核。</p>
+    </div>
+
+    <p class="note">设置保存在本机 <code>gui-settings.json</code>，不写入引擎配置，不落日志。</p>
+    <div class="row">
+      <span id="settings-msg"></span>
+      <button id="settings-cancel" type="button">取消</button>
+      <button id="settings-save" class="primary" type="button">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   CalibGuard 前端（原生 JS，无框架、无外部资源）
+   状态机：idle → queued → running（stage 中文标签 + done/total）→ done | error
+   ============================================================ */
+
+var POLL_INTERVAL_MS = 1500;
+
+// 最终决策 → 大标签文案与配色（引擎真实四值；补丁 5）
+var DECISIONS = {
+  allow:         { label: "放行",   cls: "d-allow",      color: "#2e7d32" },
+  block:         { label: "拦截",   cls: "d-block",      color: "#d32f2f" },
+  suspicious:    { label: "可疑",   cls: "d-suspicious", color: "#f9a825" },
+  manual_review: { label: "转人工", cls: "d-manual",     color: "#757575" }
+};
+// 门控决策 → 小字（引擎真实三值）
+var GATES = { allow: "放行", llm_review: "提交云端 LLM", block: "拦截" };
+// 阶段 → 中文标签（引擎无回调钩子，实际只出现 model / report）
+var STAGES = {
+  preprocess: "预处理中", features: "特征提取中", model: "模型推理中",
+  llm: "云端 LLM 分析中", report: "生成报告中"
+};
+// 证据分组 → 中文标签（字段名以引擎 FeatureEvidence 为准）
+var EVIDENCE_GROUPS = [
+  ["dangerous_apis", "危险API"], ["network_indicators", "网络行为"],
+  ["credential_access", "凭据访问"], ["obfuscation_signals", "混淆编码"],
+  ["file_operations", "文件操作"], ["injection_phrases", "注入话术"],
+  ["high_entropy_strings", "高熵字符串"]
+];
+
+var state = { files: [], jobId: null, timer: null, busy: false };
+
+function $(id) { return document.getElementById(id); }
+
+function show(el) { el.classList.remove("hidden"); }
+function hide(el) { el.classList.add("hidden"); }
+
+function formatSize(bytes) {
+  if (typeof bytes !== "number" || isNaN(bytes)) { return ""; }
+  if (bytes < 1024) { return bytes + " B"; }
+  if (bytes < 1024 * 1024) { return (bytes / 1024).toFixed(1) + " KB"; }
+  return (bytes / 1024 / 1024).toFixed(2) + " MB";
+}
+
+async function fetchJSON(url, options) {
+  var resp = await fetch(url, options);
+  var text = await resp.text();
+  var data;
+  try { data = text ? JSON.parse(text) : {}; }
+  catch (err) { throw new Error("后端返回了非 JSON 内容（HTTP " + resp.status + "）：" + text.slice(0, 200)); }
+  if (!resp.ok) { throw new Error(data.error || ("HTTP " + resp.status)); }
+  return data;
+}
+
+/* ---------------- 顶栏：健康检查 + 模型信息 ---------------- */
+
+async function loadTopBar() {
+  try {
+    var health = await fetchJSON("/api/health");
+    if (health.calib_ok === false) { show($("banner")); } else { hide($("banner")); }
+  } catch (err) {
+    $("model-info").textContent = "后端健康检查失败：" + err.message;
+    return;
+  }
+  try {
+    var info = await fetchJSON("/api/model-info");
+    $("model-info").textContent = "模型：" + info.model + " ｜ 校准时间：" + (info.calib_fit_at || "未知");
+  } catch (err) {
+    $("model-info").textContent = "模型信息读取失败：" + err.message;
+  }
+}
+
+/* ---------------- 拖拽区 ---------------- */
+
+function renderFileList() {
+  var list = $("file-list");
+  list.innerHTML = "";
+  state.files.forEach(function (file) {
+    var row = document.createElement("div");
+    row.className = "file-row";
+    var name = document.createElement("span");
+    name.textContent = file.name;
+    var size = document.createElement("span");
+    size.className = "size";
+    size.textContent = formatSize(file.size);
+    row.appendChild(name);
+    row.appendChild(size);
+    list.appendChild(row);
+  });
+  $("start-btn").disabled = state.busy || state.files.length === 0;
+  $("clear-btn").disabled = state.busy || state.files.length === 0;
+}
+
+function addFiles(fileList) {
+  for (var i = 0; i < fileList.length; i++) { state.files.push(fileList[i]); }
+  renderFileList();
+}
+
+function bindDropZone() {
+  var zone = $("drop-zone");
+  ["dragenter", "dragover"].forEach(function (type) {
+    zone.addEventListener(type, function (event) {
+      event.preventDefault();
+      zone.classList.add("over");
+    });
+  });
+  ["dragleave", "drop"].forEach(function (type) {
+    zone.addEventListener(type, function (event) {
+      event.preventDefault();
+      zone.classList.remove("over");
+    });
+  });
+  zone.addEventListener("drop", function (event) {
+    if (event.dataTransfer && event.dataTransfer.files.length) { addFiles(event.dataTransfer.files); }
+  });
+  $("pick-btn").addEventListener("click", function () { $("file-input").click(); });
+  $("file-input").addEventListener("change", function (event) {
+    addFiles(event.target.files);
+    event.target.value = "";
+  });
+  $("clear-btn").addEventListener("click", function () {
+    state.files = [];
+    renderFileList();
+  });
+  $("start-btn").addEventListener("click", function () { startFromFiles(); });
+  $("paste-start-btn").addEventListener("click", function () { startFromPastedPaths(); });
+}
+
+/* ---------------- 提交任务 ---------------- */
+
+function setUpBusy(busy) {
+  state.busy = busy;
+  $("start-btn").disabled = busy || state.files.length === 0;
+  $("clear-btn").disabled = busy || state.files.length === 0;
+  $("paste-start-btn").disabled = busy;
+}
+
+async function startFromFiles() {
+  if (state.busy) { return; }
+  if (state.files.length === 0) { return; }
+  setUpBusy(true);
+  showProgress("上传文件中…", "共 " + state.files.length + " 个文件，正在上传副本到 uploads/");
+  try {
+    // 浏览器拿不到磁盘路径，先上传内容换取服务端相对路径（补丁 9）
+    var form = new FormData();
+    state.files.forEach(function (file) { form.append("files", file); });
+    var uploaded = await fetchJSON("/api/upload", { method: "POST", body: form });
+    await createJob(uploaded.paths);
+  } catch (err) {
+    renderJobError(err.message);
+    setUpBusy(false);
+  }
+}
+
+async function startFromPastedPaths() {
+  if (state.busy) { return; }
+  var raw = $("paste-paths").value.split(/\r?\n/);
+  var paths = raw.map(function (line) { return line.trim(); }).filter(function (line) { return line.length > 0; });
+  if (paths.length === 0) { alert("请先在文本框中粘贴至少一个文件路径（每行一个）"); return; }
+  setUpBusy(true);
+  showProgress("提交任务中…", "共 " + paths.length + " 个路径");
+  try {
+    await createJob(paths);
+  } catch (err) {
+    renderJobError(err.message);
+    setUpBusy(false);
+  }
+}
+
+async function createJob(paths) {
+  var created = await fetchJSON("/api/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paths: paths })
+  });
+  state.jobId = created.job_id;
+  state.paths = paths;
+  state.startedAt = Date.now();
+  showProgress("排队中…", "共 " + paths.length + " 个文件，已完成 0 个");
+  startPolling();
+}
+
+function startPolling() {
+  stopPolling();
+  state.timer = setInterval(poll, POLL_INTERVAL_MS);
+  poll();
+}
+
+function stopPolling() {
+  if (state.timer !== null) { clearInterval(state.timer); state.timer = null; }
+}
+
+async function poll() {
+  if (state.jobId === null) { return; }
+  var job;
+  try {
+    job = await fetchJSON("/api/jobs/" + state.jobId);
+  } catch (err) {
+    stopPolling();
+    renderJobError(err.message);
+    setUpBusy(false);
+    return;
+  }
+  renderProgress(job);
+  if (job.state === "done" || job.state === "error") {
+    stopPolling();
+    renderResults(job);
+    setUpBusy(false);
+  }
+}
+
+/* ---------------- 进度区 ---------------- */
+
+function showProgress(stageText, countText) {
+  show($("progress"));
+  $("progress-stage").textContent = stageText;
+  $("progress-count").textContent = countText || "";
+}
+
+function renderProgress(job) {
+  var stageText;
+  if (job.state === "queued") { stageText = "排队中…（后端单并发，等待前一个任务结束）"; }
+  else if (job.state === "running") { stageText = "审计中：" + (STAGES[job.stage] || job.stage || "处理中"); }
+  else if (job.state === "done") { stageText = "审计完成"; }
+  else { stageText = "审计失败：" + (job.error || "见下方文件卡片"); }
+  $("progress-stage").textContent = stageText;
+  $("progress-count").textContent = "共 " + job.total + " 个文件，已完成 " + job.done + " 个";
+}
+
+/* ---------------- 结果区 ---------------- */
+
+function renderJobError(message) {
+  showProgress("提交失败", "");
+  var box = document.createElement("div");
+  box.className = "err";
+  box.textContent = "任务提交失败：" + message;
+  $("results").appendChild(box);
+}
+
+function renderResults(job) {
+  var head = document.createElement("div");
+  head.className = "job-head";
+  head.textContent = "任务 " + state.jobId + "（" + job.total + " 个文件，状态：" + job.state + "）";
+  $("results").appendChild(head);
+  var paths = job.paths || state.paths || [];
+  (job.results || []).forEach(function (result, index) {
+    $("results").appendChild(buildCard(paths[index] || ("文件 " + (index + 1)), result));
+  });
+}
+
+function buildCard(path, result) {
+  var card = document.createElement("div");
+  card.className = "card";
+
+  var title = document.createElement("h3");
+  title.textContent = path;
+  card.appendChild(title);
+
+  if (!result || typeof result !== "object") {
+    card.appendChild(errorBox("返回结果为空"));
+    return card;
+  }
+  // 引擎报告里的 error 字段（含写入报告失败）必须显示
+  if (result.error) { card.appendChild(errorBox(String(result.error))); }
+
+  // ---- 最终决策大标签 + 门控小字 ----
+  var decision = DECISIONS[result.final_decision];
+  if (decision) {
+    var tag = document.createElement("span");
+    tag.className = "decision " + decision.cls;
+    tag.textContent = decision.label;
+    card.appendChild(tag);
+  } else if (result.final_decision) {
+    var raw = document.createElement("span");
+    raw.className = "decision d-manual";
+    raw.textContent = String(result.final_decision);
+    card.appendChild(raw);
+  }
+  if (result.gate_decision) {
+    var gate = document.createElement("span");
+    gate.className = "gate";
+    gate.textContent = "门控: " + result.gate_decision +
+      (GATES[result.gate_decision] ? "（" + GATES[result.gate_decision] + "）" : "");
+    card.appendChild(gate);
+  }
+
+  // ---- 校准后恶意概率进度条 ----
+  if (typeof result.calibrated_probability === "number") {
+    var prob = Math.max(0, Math.min(1, result.calibrated_probability));
+    var wrap = document.createElement("div");
+    wrap.className = "prob-wrap";
+    var bar = document.createElement("div");
+    bar.className = "prob-bar";
+    var fill = document.createElement("span");
+    fill.style.width = (prob * 100).toFixed(2) + "%";
+    fill.style.background = decision ? decision.color : "#1976d2";
+    bar.appendChild(fill);
+    var text = document.createElement("div");
+    text.className = "prob-text";
+    text.textContent = "校准后恶意概率：" + (prob * 100).toFixed(2) + "%";
+    wrap.appendChild(bar);
+    wrap.appendChild(text);
+    card.appendChild(wrap);
+  }
+
+  // ---- 滑窗推理统计 ----
+  if (typeof result.windows_evaluated === "number") {
+    var stats = document.createElement("div");
+    stats.className = "meta-line";
+    stats.textContent = "全文滑窗 " + result.windows_evaluated + " 段，早停：" +
+      (result.early_stopped ? "是" : "否");
+    card.appendChild(stats);
+  }
+
+  // ---- 截断警示 ----
+  if (result.preprocess_truncated === true) {
+    var warn = document.createElement("div");
+    warn.className = "warn";
+    warn.textContent = "文件超 1MB 已截断审计";
+    card.appendChild(warn);
+  }
+
+  // ---- 特征命中徽章 ----
+  card.appendChild(buildEvidence(result.evidence));
+
+  // ---- LLM 结论 ----
+  card.appendChild(buildLLM(result));
+
+  return card;
+}
+
+function buildEvidence(evidence) {
+  var wrap = document.createElement("div");
+  wrap.className = "evidence";
+
+  // 先收集命中项，再决定是否显示“特征命中”标题（全空时只显示“无特征命中”）
+  var groups = [];
+  if (evidence && typeof evidence === "object") {
+    EVIDENCE_GROUPS.forEach(function (pair) {
+      var items = evidence[pair[0]];
+      if (Array.isArray(items) && items.length > 0) { groups.push(chipGroup(pair[1], items.map(String), true)); }
+    });
+    var longLines = evidence.long_line_numbers;
+    if (Array.isArray(longLines) && longLines.length > 0) {
+      groups.push(chipGroup("超长行行号", longLines.map(String)));
+    }
+    if (typeof evidence.random_identifier_count === "number" && evidence.random_identifier_count > 0) {
+      groups.push(chipGroup("长随机标识符", ["数量 " + evidence.random_identifier_count]));
+    }
+  }
+
+  if (groups.length === 0) {
+    var none = document.createElement("div");
+    none.className = "meta-line";
+    none.textContent = "无特征命中";
+    wrap.appendChild(none);
+    return wrap;
+  }
+  var heading = document.createElement("div");
+  heading.className = "meta-line";
+  heading.textContent = "特征命中";
+  wrap.appendChild(heading);
+  groups.forEach(function (group) { wrap.appendChild(group); });
+  return wrap;
+}
+
+function chipGroup(labelText, values, hit) {
+  var group = document.createElement("div");
+  group.className = "ev-group";
+  var label = document.createElement("span");
+  label.className = "ev-label";
+  label.textContent = labelText + "（" + values.length + "）";
+  group.appendChild(label);
+  var chips = document.createElement("div");
+  chips.className = "ev-chips";
+  values.forEach(function (value) {
+    var chip = document.createElement("span");
+    chip.className = hit ? "chip hit" : "chip";
+    chip.textContent = value;
+    chips.appendChild(chip);
+  });
+  group.appendChild(chips);
+  return group;
+}
+
+function buildLLM(result) {
+  var llm = result.llm;
+  var box = document.createElement("div");
+  box.className = "llm-box";
+  if (!llm || typeof llm !== "object") {
+    box.textContent = "本地概率落在中间地带之外，未提交云端分析。";
+    return box;
+  }
+  if (llm.status === "ok") {
+    var risk = document.createElement("div");
+    risk.className = "risk";
+    risk.textContent = "云端结论：" + (llm.risk || "未知");
+    box.appendChild(risk);
+    var reason = document.createElement("div");
+    reason.textContent = "原因：" + (llm.reason || "（未提供）");
+    box.appendChild(reason);
+    var action = document.createElement("div");
+    action.textContent = "建议：" + (llm.action || "（未提供）");
+    box.appendChild(action);
+    if (typeof result.llm_calls === "number" && result.llm_calls > 1) {
+      var calls = document.createElement("div");
+      calls.className = "meta-line";
+      calls.textContent = "共送审 " + result.llm_calls + " 段，取最严重结论";
+      box.appendChild(calls);
+    }
+  } else if (llm.status === "disabled") {
+    box.textContent = "已关闭云端复核，灰区按本地模型 0.5 判定（>0.5 拦截，否则放行）";
+  } else if (llm.status === "api_error") {
+    box.textContent = "LLM 未配置，降级人工复核";
+  } else {
+    box.textContent = "LLM 输出不合法，降级人工复核";
+  }
+  return box;
+}
+
+function errorBox(text) {
+  var box = document.createElement("div");
+  box.className = "err";
+  box.textContent = "错误：" + text;
+  return box;
+}
+
+/* ---------------- 设置弹层 ---------------- */
+
+// 表单 → 设置对象（键名与后端 gui-settings.json / audit_service 一致）
+function readSettingsForm() {
+  return {
+    llm_enabled: $("llm-enabled").checked,
+    deepseek_api_key: $("api-key").value.trim(),
+    llm_base_url: $("base-url").value.trim(),
+    llm_model: $("llm-model").value.trim(),
+    allow_threshold: parseFloat($("allow-threshold").value),
+    block_threshold: parseFloat($("block-threshold").value),
+    llm_content_source: $("content-source").value,
+    llm_delivery_mode: $("delivery-mode").value,
+    llm_truncate_chars: parseInt($("truncate-chars").value, 10),
+    llm_window_chars: parseInt($("window-chars").value, 10),
+    llm_window_overlap: parseInt($("window-overlap").value, 10)
+  };
+}
+
+function fillSettingsForm(s) {
+  $("llm-enabled").checked = s.llm_enabled !== false;
+  $("api-key").value = s.deepseek_api_key || "";
+  $("base-url").value = s.llm_base_url || "";
+  $("llm-model").value = s.llm_model || "";
+  $("allow-threshold").value = s.allow_threshold;
+  $("block-threshold").value = s.block_threshold;
+  $("content-source").value = s.llm_content_source || "evidence";
+  $("delivery-mode").value = s.llm_delivery_mode || "truncate";
+  $("truncate-chars").value = s.llm_truncate_chars;
+  $("window-chars").value = s.llm_window_chars;
+  $("window-overlap").value = s.llm_window_overlap;
+  syncSettingsRows();
+}
+
+// 联动：关闭云端时整组置灰禁用；按投递方式只显示对应参数行
+function syncSettingsRows() {
+  var enabled = $("llm-enabled").checked;
+  $("llm-group").classList.toggle("off", !enabled);
+  ["api-key", "base-url", "llm-model", "content-source", "delivery-mode",
+    "truncate-chars", "window-chars", "window-overlap"].forEach(function (id) {
+    $(id).disabled = !enabled;
+  });
+  var mode = $("delivery-mode").value;
+  $("row-truncate").classList.toggle("hidden", mode !== "truncate");
+  $("row-window").classList.toggle("hidden", mode !== "window");
+  $("row-window2").classList.toggle("hidden", mode !== "window");
+}
+
+function setSettingsMsg(text, isError) {
+  var el = $("settings-msg");
+  el.textContent = text;
+  el.classList.toggle("err", !!isError);
+}
+
+// 前端先做一次基本校验（后端仍是权威校验），避免明显的非法值发出请求
+function validateSettings(p) {
+  if (!(p.allow_threshold > 0 && p.allow_threshold < p.block_threshold
+        && p.block_threshold < 1)) {
+    return "灰区范围必须满足 0 < 下限 < 上限 < 1";
+  }
+  if (!p.llm_enabled) { return ""; }
+  if (!p.llm_base_url) { return "启用云端复核时 Base URL 不能为空"; }
+  if (!p.llm_model) { return "启用云端复核时模型名称不能为空"; }
+  if (p.llm_delivery_mode === "truncate" && !(p.llm_truncate_chars >= 1)) {
+    return "截断大小必须 ≥ 1";
+  }
+  if (p.llm_delivery_mode === "window") {
+    if (!(p.llm_window_chars >= 1)) { return "滑窗大小必须 ≥ 1"; }
+    if (!(p.llm_window_overlap >= 0 && p.llm_window_overlap < p.llm_window_chars)) {
+      return "滑窗重叠必须满足 0 ≤ 重叠 < 滑窗大小";
+    }
+  }
+  return "";
+}
+
+var SETTINGS_FALLBACK = {
+  llm_enabled: true, deepseek_api_key: "", llm_base_url: "https://api.deepseek.com",
+  llm_model: "deepseek-chat", allow_threshold: 0.15, block_threshold: 0.85,
+  llm_content_source: "evidence", llm_delivery_mode: "truncate",
+  llm_truncate_chars: 3000, llm_window_chars: 3000, llm_window_overlap: 500
+};
+
+function bindSettings() {
+  $("settings-btn").addEventListener("click", async function () {
+    setSettingsMsg("", false);
+    try {
+      fillSettingsForm(await fetchJSON("/api/settings"));
+    } catch (err) {
+      // 读不到当前设置也要让面板能打开（用默认值占位），并明示失败原因
+      fillSettingsForm(SETTINGS_FALLBACK);
+      setSettingsMsg("读取当前设置失败：" + err.message, true);
+    }
+    show($("settings-modal"));
+  });
+  $("settings-cancel").addEventListener("click", function () { hide($("settings-modal")); });
+  $("llm-enabled").addEventListener("change", syncSettingsRows);
+  $("delivery-mode").addEventListener("change", syncSettingsRows);
+  $("settings-save").addEventListener("click", async function () {
+    var payload = readSettingsForm();
+    var invalid = validateSettings(payload);
+    if (invalid) { setSettingsMsg(invalid, true); return; }
+    try {
+      var resp = await fetchJSON("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      // 审计运行中后端不应用设置（避免并发改写），提示用户等当前任务结束
+      setSettingsMsg(resp.llm_reload_deferred
+        ? "已保存；当前任务完成后生效"
+        : "已保存", false);
+    } catch (err) {
+      setSettingsMsg("保存失败：" + err.message, true);
+    }
+  });
+}
+
+/* ---------------- 启动 ---------------- */
+
+bindDropZone();
+bindSettings();
+renderFileList();
+loadTopBar();
+</script>
+</body>
+</html>

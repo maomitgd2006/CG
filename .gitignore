@@ -1,0 +1,67 @@
+# ============================================================
+# CalibGuard (CG) .gitignore
+# ============================================================
+
+# ---- 运行环境 / 依赖（用户本机自动生成）----
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.hf_cache/
+
+# ---- 密钥与本地配置（绝不入库）----
+.env
+*.env
+gui-settings.json
+credentials.json
+*.key
+*.pem
+*.p12
+
+# ---- 语料与训练产物（体积大；且原始语料含第三方包内容）----
+CG_Bench/data/
+CG_Bench/results/
+CG_Bench/results_archive/
+CG_Bench/models/
+CG_Bench/models_baseline/
+CG_Bench/base_models/
+
+# ---- GUI 运行产物与打包中间物 ----
+CG_GUI/models/
+CG_GUI/reports/
+CG_GUI/uploads/
+CG_GUI/logs/
+CG_GUI/build/
+CG_GUI/release/
+CG_GUI/__pycache__/
+
+# ---- 发布物二进制（改为经由 GitHub Releases 分发）----
+CG_GUI/dist/
+*.zip
+*.exe
+*.msi
+
+# ---- 文档（本项目开源版本不含内部设计/参赛文档）----
+参赛提交材料/
+*.docx
+*.doc
+*.pdf
+*.pptx
+*.xlsx
+*.md
+!README.md
+
+# ---- Hello / 临时脚本 ----
+_scan_secrets.py
+_scan_out.txt
+_tools/
+*.log
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

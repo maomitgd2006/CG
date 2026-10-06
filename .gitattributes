@@ -1,0 +1,38 @@
+# ============================================================
+# 换行符规范化
+#   仓库内统一存 LF；检出时按平台/类型还原，避免 shell 脚本被 CRLF 破坏
+# ============================================================
+* text=auto eol=lf
+
+# Shell 脚本必须 LF（否则 Linux 下报 bad interpreter: /bin/bash^M）
+*.sh    text eol=lf
+
+# Windows 批处理必须 CRLF
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# 二进制（不参与换行转换）
+*.safetensors binary
+*.bin         binary
+*.png         binary
+*.jpg         binary
+*.jpeg        binary
+*.gif         binary
+*.ico         binary
+*.zip         binary
+*.exe         binary
+*.pdf         binary
+*.docx        binary
+*.pptx        binary
+
+# 文本文件（显式声明，便于 diff）
+*.py     text
+*.md     text
+*.txt    text
+*.yaml   text
+*.yml    text
+*.json   text
+*.html   text
+*.css    text
+*.js     text
+*.spec   text
